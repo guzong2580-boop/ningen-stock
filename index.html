@@ -295,9 +295,10 @@ function filterAdd() {
   }).join('');
 }
 
-const MKT={kospi:'^KS11',kosdaq:'^KQ11',dow:'^DJI',nasdaq:'^IXIC',sp500:'^GSPC'};
+const KR_MARKETS = ['kospi','kosdaq','etf'];
+const isKR = s => KR_MARKETS.includes(s.m);
+const isDec = s => ['fx','oil','metal','commodity','bond'].includes(s.m);
 let cc={},tgt={};
-const isDec=s=>['fx','oil','metal','commodity','bond'].includes(s.m);
 
 function loadTgt(){const s=localStorage.getItem('ningen_tgt');if(s)tgt=JSON.parse(s);}
 function saveTgt(){localStorage.setItem('ningen_tgt',JSON.stringify(tgt));}
@@ -305,10 +306,29 @@ function setTgt(c){const i=document.getElementById('t_'+c);const v=parseFloat(i.
 
 window.addEventListener('DOMContentLoaded',()=>{loadW();loadTgt();renderCards();refreshAll();fetchNews();setInterval(refreshAll,30000);setInterval(fetchNews,120000);});
 
-async function fetchPrices(syms){try{const r=await fetch('/api/price?symbols='+syms.join(','));return await r.json();}catch(e){return {};}}
-async function fetchCharts(syms){
+/* ===== 네이버 API (한국 주식/지수) ===== */
+async function fetchNaverStocks(codes){
+  if(!codes.length)return{};
+  try{const r=await fetch('/api/naver?type=stocks&codes='+codes.join(','));return await r.json();}catch(e){return{};}
+}
+async function fetchNaverIndex(codes){
+  if(!codes.length)return{};
+  try{const r=await fetch('/api/naver?type=index&codes='+codes.join(','));return await r.json();}catch(e){return{};}
+}
+async function fetchNaverCharts(codes){
+  const need=codes.filter(c=>!cc[c]);
+  if(!need.length)return;
+  try{const r=await fetch('/api/naver?type=charts&codes='+need.join(','));const d=await r.json();Object.entries(d).forEach(([k,v])=>{cc[k]=v;});}catch(e){}
+}
+
+/* ===== Yahoo API (해외) ===== */
+async function fetchYahoo(syms){
+  if(!syms.length)return{};
+  try{const r=await fetch('/api/price?symbols='+syms.join(','));return await r.json();}catch(e){return{};}
+}
+async function fetchYahooCharts(syms){
   const need=syms.filter(s=>!cc[s]);
-  if(!need.length) return;
+  if(!need.length)return;
   try{const r=await fetch('/api/charts?symbols='+need.join(','));const d=await r.json();Object.entries(d).forEach(([k,v])=>{cc[k]=v;});}catch(e){}
 }
 
@@ -428,36 +448,43 @@ function drawChart(c,data){
   grad.addColorStop(1,'rgba(0,0,0,0)');ctx.fillStyle=grad;ctx.fill();
 }
 
-/* 갱신 - 배치별 점진 로딩 */
-function chunk(arr,size){const r=[];for(let i=0;i<arr.length;i+=size)r.push(arr.slice(i,i+size));return r;}
-
+/* 갱신 - 네이버(한국) + Yahoo(해외) 하이브리드 */
 async function refreshAll(){
-  const bar=document.getElementById('loadBar');bar.style.width='5%';
+  const bar=document.getElementById('loadBar');bar.style.width='10%';
 
-  // 배치별로 나눠서 요청 (10개씩) - 먼저 도착한 배치부터 화면에 바로 반영
-  const allItems=[...W];
-  const mktSyms=Object.values(MKT);
-  const batches=chunk(allItems,10);
-  const total=batches.length+1;
-  let done=0;
+  const krItems = W.filter(isKR);
+  const intlItems = W.filter(s => !isKR(s));
+  const krCodes = krItems.map(s => s.c);
+  const intlSyms = intlItems.map(s => s.y);
 
-  // 시장지표 (작은 요청이라 먼저)
-  const md=await fetchPrices(mktSyms);
-  Object.entries(MKT).forEach(([id,sym])=>upMk(id,md[sym]));
-  done++;bar.style.width=Math.round(done/total*80)+'%';
+  // 1) 시장 지표: 네이버(KOSPI,KOSDAQ) + Yahoo(DOW,NASDAQ,S&P) 동시
+  const [naverIdx, yahooIdx] = await Promise.all([
+    fetchNaverIndex(['KOSPI','KOSDAQ']),
+    fetchYahoo(['^DJI','^IXIC','^GSPC']),
+  ]);
+  upMk('kospi', naverIdx['KOSPI']);
+  upMk('kosdaq', naverIdx['KOSDAQ']);
+  upMk('dow', yahooIdx['^DJI']);
+  upMk('nasdaq', yahooIdx['^IXIC']);
+  upMk('sp500', yahooIdx['^GSPC']);
+  bar.style.width='30%';
 
-  // 종목 배치별 병렬 → 각 배치가 오면 즉시 렌더
-  for(const batch of batches){
-    const syms=batch.map(s=>s.y);
-    const ad=await fetchPrices(syms);
-    batch.forEach(s=>upd(s.c,ad[s.y]));
-    done++;bar.style.width=Math.round(done/total*80)+'%';
-  }
+  // 2) 종목: 네이버(한국) + Yahoo(해외) 동시
+  const [naverData, yahooData] = await Promise.all([
+    fetchNaverStocks(krCodes),
+    fetchYahoo(intlSyms),
+  ]);
+  krItems.forEach(s => upd(s.c, naverData[s.c]));
+  intlItems.forEach(s => upd(s.c, yahooData[s.y]));
+  bar.style.width='70%';
 
-  // 차트 (캐시 안 된 것만, 병렬)
-  bar.style.width='85%';
-  await fetchCharts(W.map(s=>s.y));
-  W.forEach(s=>{if(cc[s.y])drawChart(s.c,cc[s.y]);});
+  // 3) 차트: 네이버(한국) + Yahoo(해외) 동시
+  await Promise.all([
+    fetchNaverCharts(krCodes),
+    fetchYahooCharts(intlSyms),
+  ]);
+  krItems.forEach(s => { if(cc[s.c]) drawChart(s.c, cc[s.c]); });
+  intlItems.forEach(s => { if(cc[s.y]) drawChart(s.c, cc[s.y]); });
 
   bar.style.width='100%';setTimeout(()=>{bar.style.width='0';},400);
   document.getElementById('refreshTimer').textContent='갱신 '+new Date().toLocaleTimeString('ko-KR');
