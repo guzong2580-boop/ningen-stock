@@ -18,6 +18,8 @@ export default async function handler(req, res) {
         const price = m.regularMarketPrice || 0;
         const q = r.indicators?.quote?.[0] || {};
         const len = q.close?.length || 0;
+        const chg = m.regularMarketChange ?? +(price - prev).toFixed(2);
+        const chgPct = m.regularMarketChangePercent ?? (prev ? +((price - prev) / prev * 100).toFixed(2) : 0);
         results[sym] = {
           price,
           prevClose: prev,
@@ -25,8 +27,8 @@ export default async function handler(req, res) {
           high: m.regularMarketDayHigh || (len ? Math.max(...q.high.filter(Boolean)) : 0),
           low: m.regularMarketDayLow || (len ? Math.min(...q.low.filter(Boolean)) : 0),
           volume: m.regularMarketVolume || 0,
-          change: +(price - prev).toFixed(2),
-          changeRate: prev ? +((price - prev) / prev * 100).toFixed(2) : 0,
+          change: +chg.toFixed(2),
+          changeRate: +chgPct.toFixed(2),
         };
       }
     } catch (e) {

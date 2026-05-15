@@ -35,14 +35,20 @@ def fetch_one(sym):
             q = r.get("indicators", {}).get("quote", [{}])[0]
             prev = m.get("chartPreviousClose") or m.get("previousClose") or 0
             price = m.get("regularMarketPrice") or 0
+            chg = m.get("regularMarketChange")
+            chg_pct = m.get("regularMarketChangePercent")
+            if chg is None:
+                chg = round(price - prev, 2)
+            if chg_pct is None:
+                chg_pct = round((price - prev) / prev * 100, 2) if prev else 0
             result = {
                 "price": price, "prevClose": prev,
                 "open": (q.get("open") or [0])[-1] if q.get("open") else 0,
                 "high": m.get("regularMarketDayHigh") or 0,
                 "low": m.get("regularMarketDayLow") or 0,
                 "volume": m.get("regularMarketVolume") or 0,
-                "change": round(price - prev, 2),
-                "changeRate": round((price - prev) / prev * 100, 2) if prev else 0,
+                "change": round(chg, 2),
+                "changeRate": round(chg_pct, 2),
             }
             CACHE[sym] = (time.time(), result)
             return sym, result
