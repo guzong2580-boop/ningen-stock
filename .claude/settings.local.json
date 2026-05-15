@@ -92,7 +92,10 @@
       "Bash(curl -s \"http://localhost:5505/api/naver?type=index&codes=KOSPI\")",
       "Bash(curl -s \"http://localhost:5506/api/naver?type=index&codes=KOSPI,KOSDAQ\")",
       "Bash(curl -s \"http://localhost:5506/api/naver?type=stocks&codes=005930,000660\")",
-      "Bash(python -c \"import sys,json;d=json.load\\(sys.stdin\\);[print\\(f'{k}: {v[\\\\\"price\\\\\"]:,.0f} {v[\\\\\"changeRate\\\\\"]}%'\\) for k,v in d.items\\(\\)]\")"
+      "Bash(python -c \"import sys,json;d=json.load\\(sys.stdin\\);[print\\(f'{k}: {v[\\\\\"price\\\\\"]:,.0f} {v[\\\\\"changeRate\\\\\"]}%'\\) for k,v in d.items\\(\\)]\")",
+      "Bash(powershell -Command \"Get-Process python* -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue\")",
+      "Bash(python -c \"import sys,json;d=json.load\\(sys.stdin\\);print\\('KOSPI:',d.get\\('KOSPI',{}\\).get\\('price','FAIL'\\),d.get\\('KOSPI',{}\\).get\\('changeRate',''\\),'%'\\)\")",
+      "Bash(curl -s \"http://localhost:5502/kis.html\")"
     ]
   }
 }

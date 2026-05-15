@@ -3,7 +3,7 @@ import http.server, json, urllib.request, urllib.parse, ssl, os, time
 import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-PORT = 5506
+PORT = 5502
 YAHOO = "https://query1.finance.yahoo.com/v8/finance/chart"
 NAVER_STOCK = "https://polling.finance.naver.com/api/realtime/domestic/stock"
 NAVER_INDEX = "https://polling.finance.naver.com/api/realtime/domestic/index"
@@ -20,6 +20,14 @@ ssl_ctx.verify_mode = ssl.CERT_NONE
 ROOT = os.path.dirname(os.path.abspath(__file__))
 with open(os.path.join(ROOT, "index.html"), "rb") as f:
     INDEX_HTML = f.read()
+KIS_HTML = b""
+kis_path = os.path.join(ROOT, "kis.html")
+if os.path.exists(kis_path):
+    with open(kis_path, "rb") as f:
+        KIS_HTML = f.read()
+
+KIS_REAL = "https://openapi.koreainvestment.com:9443"
+KIS_MOCK = "https://openapivts.koreainvestment.com:29443"
 
 
 def parse_num(s):
@@ -166,11 +174,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
         try:
             p = self.path
             if p == "/" or p == "/index.html":
-                self.send_response(200)
-                self.send_header("Content-Type", "text/html; charset=utf-8")
-                self.send_header("Content-Length", len(INDEX_HTML))
-                self.end_headers()
-                self.wfile.write(INDEX_HTML)
+                self.serve_html(INDEX_HTML)
+            elif p == "/kis.html" or p == "/kis":
+                self.serve_html(KIS_HTML)
+            elif p.startswith("/api/kis/"):
+                self.handle_kis_proxy()
             elif p.startswith("/api/naver"):
                 self.handle_naver()
             elif p.startswith("/api/price"):
@@ -184,6 +192,86 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self.end_headers()
         except Exception:
             import traceback; traceback.print_exc()
+
+    def serve_html(self, content):
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", len(content))
+        self.end_headers()
+        self.wfile.write(content)
+
+    def handle_kis_proxy(self):
+        """KIS API 프록시 - /api/kis/real/... or /api/kis/mock/..."""
+        try:
+            path = self.path[len("/api/kis/"):]
+            if path.startswith("real/"):
+                base = KIS_REAL
+                api_path = path[4:]
+            elif path.startswith("mock/"):
+                base = KIS_MOCK
+                api_path = path[4:]
+            else:
+                self.send_json({"error": "use /api/kis/real/ or /api/kis/mock/"})
+                return
+            url = base + api_path
+            headers = {}
+            for key in ['content-type','authorization','appkey','appsecret','tr_id','custtype']:
+                val = self.headers.get(key)
+                if val: headers[key] = val
+            req = urllib.request.Request(url, headers=headers)
+            with urllib.request.urlopen(req, context=ssl_ctx, timeout=10) as resp:
+                data = resp.read()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(data)
+        except urllib.error.HTTPError as e:
+            data = e.read()
+            self.send_response(e.code)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(data)
+        except Exception as e:
+            self.send_json({"error": str(e)})
+
+    def do_POST(self):
+        """KIS 토큰 발급용 POST 프록시"""
+        try:
+            if self.path.startswith("/api/kis/"):
+                path = self.path[len("/api/kis/"):]
+                if path.startswith("real/"):
+                    base = KIS_REAL
+                    api_path = path[4:]
+                elif path.startswith("mock/"):
+                    base = KIS_MOCK
+                    api_path = path[4:]
+                else:
+                    self.send_json({"error": "invalid"}); return
+                url = base + api_path
+                length = int(self.headers.get('content-length', 0))
+                body = self.rfile.read(length) if length else None
+                headers = {"Content-Type": "application/json"}
+                req = urllib.request.Request(url, data=body, headers=headers, method="POST")
+                with urllib.request.urlopen(req, context=ssl_ctx, timeout=10) as resp:
+                    data = resp.read()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(data)
+            else:
+                self.send_response(404); self.end_headers()
+        except Exception as e:
+            self.send_json({"error": str(e)})
+
+    def do_OPTIONS(self):
+        self.send_response(204)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, authorization, appkey, appsecret, tr_id, custtype")
+        self.end_headers()
 
     def handle_naver(self):
         try:
